@@ -67,6 +67,35 @@ class UnifiedHybridClient(object):
                 "Unable to obtain OpenID access token from {}. Response: {}".format(self.iss_url,
                                                                                     str(response)))
 
+    def __check_is_rhmi_cluster(self, cluster: str) -> bool:
+        """
+        Query a list of clusters to see if they have the RHMI add-on via the UHC HTTP API.
+
+        :param clusters: (list) a list of Clusters to report on
+
+        :returns: (list) a list of uhc.Cluster objects matching the query
+        """
+
+        self.logger.info("Querying UHC API if cluster had RHMI add-on installed \"{}\"".format(cluster))
+
+        response = requests.get("{}/api/clusters_mgmt/v1/clusters/{}/addons".format(self.api_url, cluster),
+                                headers={"accept": "application/json",
+                                         "Authorization": "Bearer " + self.__get_access_token(), }
+                                         , verify=True, )
+        if response.status_code == 200:
+            data = response.json()
+            if data['total'] > 0 :
+                for c in data['items']:
+                    if "rhmi" in c['id']:
+                        return True
+                return False
+            else:
+                return False 
+        else:
+            raise Exception(
+                "HTTP Status Code {} ({})".format(response.status_code, response.content))
+
+
     def search_clusters(self, query: str) -> List[Cluster]:
         """
         Query a list of clusters from the UHC HTTP API.
@@ -91,15 +120,17 @@ class UnifiedHybridClient(object):
 
         cluster_list = []
         for c in data['items']:
-            try:
-                # The API returns RFC3339 timestamps. Python can't handle RFC3339 timestamps natively,
-                # so we have to use dateparser to produce a timezone-aware datetime object
-                creation_timestamp = dateparser.parse(c['creation_timestamp'],
-                                                    settings={'RETURN_AS_TIMEZONE_AWARE': True})
+            if self.__check_is_rhmi_cluster(c['id']):
+                try:
+                    # The API returns RFC3339 timestamps. Python can't handle RFC3339 timestamps natively,
+                    # so we have to use dateparser to produce a timezone-aware datetime object
+                    creation_timestamp = dateparser.parse(c['creation_timestamp'],
+                                                        settings={'RETURN_AS_TIMEZONE_AWARE': True})
 
-                cluster_list.append(Cluster(c['id'], c['name'], c['external_id'], creation_timestamp))
-            
-            except KeyError as e:
-                self.logger.info("ExternalIDFailure:{}.".format(str(e)))
+                    cluster_list.append(Cluster(c['id'], c['name'], c['external_id'], creation_timestamp))
+                
+                except KeyError as e:
+                    self.logger.info("ExternalIDFailure:{}.".format(str(e)))
 
         return cluster_list
+
